@@ -62,11 +62,17 @@ class _PlaybackRepository extends FakeRepository {
   Future<void> release(String session) async => released.add(session);
 }
 
-final _show = drama('show', title: '测试剧');
+const _show = Drama(
+  id: 'hongguo:show',
+  source: 'hongguo',
+  title: '测试剧',
+  episodes: 80,
+);
 
 Future<(PlaybackSession, FakePlayer)> _open(
   _PlaybackRepository repository,
   LocalStore store, {
+  Drama show = _show,
   int index = 0,
   double position = 0,
   FakePlayer? standby,
@@ -76,7 +82,7 @@ Future<(PlaybackSession, FakePlayer)> _open(
   final session = PlaybackSession(
     repository: repository,
     store: store,
-    detail: dramaDetail(_show, count: 3),
+    detail: dramaDetail(show, count: 3),
     player: player,
     standby: standby,
     index: index,
@@ -497,5 +503,60 @@ void main() {
     expect(session.stalled, isTrue);
     player.buffer(false);
     expect(session.stalled, isFalse);
+  });
+
+  test('finishing the last episode continues into the next season', () async {
+    final nextSeason = drama('next', title: '测试剧 第2季');
+    final repository = _PlaybackRepository()
+      ..searchResults[_show.title] = [nextSeason]
+      ..details[nextSeason.id] = dramaDetail(nextSeason, count: 2);
+    final store = await openStore();
+    final (session, player) = await _open(repository, store, index: 2);
+
+    player.progress(_seconds(99.5), duration: _seconds(100));
+    player.finish();
+    await pumpEventQueue();
+
+    expect(session.detail.drama.id, nextSeason.id);
+    expect(session.index, 0);
+    expect(session.ready, isTrue);
+    expect(session.episode.number, 1);
+    expect(store.watched(_show.id)!.episode, 3);
+  });
+
+  test('the last episode without a next season stops instead', () async {
+    final repository = _PlaybackRepository()
+      ..searchResults[_show.title] = const [];
+    final store = await openStore();
+    final (session, player) = await _open(repository, store, index: 2);
+
+    player.progress(_seconds(99.5), duration: _seconds(100));
+    player.finish();
+    await pumpEventQueue();
+
+    expect(session.index, 2);
+    expect(player.opened, hasLength(1));
+    expect(session.ready, isTrue);
+    expect(session.paused, isTrue);
+    expect(store.watched(_show.id)!.episode, 3);
+  });
+
+  test('a non-hongguo drama never searches for the next season', () async {
+    final repository = _PlaybackRepository();
+    final store = await openStore();
+    final (session, player) = await _open(
+      repository,
+      store,
+      show: drama('dsd', source: 'dsd', title: '外部剧'),
+      index: 2,
+    );
+
+    player.progress(_seconds(99.5), duration: _seconds(100));
+    player.finish();
+    await pumpEventQueue();
+
+    expect(repository.catalogRequests, isEmpty);
+    expect(session.index, 2);
+    expect(session.paused, isTrue);
   });
 }

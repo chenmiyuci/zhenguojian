@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 import '../../drama_details.dart';
+import '../../hongguo_series.dart';
 import '../../local_store.dart';
 import '../../models.dart';
 import '../app_scope.dart';
@@ -438,8 +439,8 @@ class _DetailPageState extends State<DetailPage> {
     );
   }
 
-  Widget _enter(int index, Widget child) => EnterOnce(
-    id: 'section-$index',
+  Widget _enter(int index, Widget child, {Object? id}) => EnterOnce(
+    id: id ?? 'section-$index',
     played: _played,
     index: index,
     child: child,
@@ -492,6 +493,11 @@ class _DetailPageState extends State<DetailPage> {
                         Padding(
                           padding: const EdgeInsets.only(top: 10),
                           child: _enter(2, tags),
+                        ),
+                      if (_seasons(details, m) case final seasons?)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 10),
+                          child: _enter(2, seasons, id: 'seasons'),
                         ),
                       if (drama.description.isNotEmpty)
                         Padding(
@@ -604,6 +610,11 @@ class _DetailPageState extends State<DetailPage> {
           Padding(
             padding: const EdgeInsets.only(top: 10),
             child: _enter(2, tags),
+          ),
+        if (_seasons(details, m) case final seasons?)
+          Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: _enter(2, seasons, id: 'seasons'),
           ),
         Padding(
           padding: EdgeInsets.only(top: desktop ? 22 : 20),
@@ -1200,6 +1211,49 @@ class _DetailPageState extends State<DetailPage> {
       ],
     );
   }
+
+  Widget? _seasons(DramaDetails details, _Metrics m) {
+    if (details.seasons.isEmpty) return null;
+    final colors = Theme.of(context).colorScheme;
+    return Wrap(
+      spacing: 6,
+      runSpacing: 6,
+      children: [
+        for (final entry in details.seasons)
+          DecoratedBox(
+            decoration: BoxDecoration(
+              color: entry.drama.id == details.drama.id
+                  ? colors.primaryContainer
+                  : colors.surfaceContainerHighest,
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(6),
+              onTap: entry.drama.id == details.drama.id
+                  ? null
+                  : () => _openSeason(entry),
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+                child: Text(
+                  entry.label,
+                  style: TextStyle(
+                    fontSize: m.tag,
+                    fontWeight: entry.drama.id == details.drama.id
+                        ? FontWeight.w700
+                        : FontWeight.w400,
+                  ),
+                ),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  void _openSeason(HongguoSeriesEntry entry) => openPage<void>(
+    context,
+    (_) => DetailPage(store: widget.store, drama: entry.drama),
+  );
 
   Widget _description(Drama drama, _Metrics m) {
     final colors = Theme.of(context).colorScheme;

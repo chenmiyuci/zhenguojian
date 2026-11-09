@@ -157,6 +157,8 @@ class FakeRepository extends AppRepository {
   List<RankingBoard> boardList = const [];
   final cachedPages = <String, CatalogPage>{};
   final catalogRequests = <String>[];
+  final searchResults = <String, List<Drama>>{};
+  String searchFailure = '';
   final rankingRequests = <String>[];
   final recommendRequests = <({bool more, bool force})>[];
   String failure = '';
@@ -264,7 +266,12 @@ class FakeRepository extends AppRepository {
     bool force = false,
   }) async {
     catalogRequests.add('$source|$category|$query|$page${force ? '!' : ''}');
-    if (failure.isNotEmpty) throw AppFailure(failure);
+    if (failure.isNotEmpty || searchFailure.isNotEmpty) {
+      throw AppFailure(failure.isNotEmpty ? failure : searchFailure);
+    }
+    if (query.isNotEmpty && searchResults.containsKey(query)) {
+      return CatalogPage(searchResults[query]!, page: page);
+    }
     return pageFor(source, category, query, page);
   }
 

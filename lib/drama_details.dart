@@ -4,6 +4,7 @@ import 'package:flutter/foundation.dart';
 
 import 'core_bridge.dart';
 import 'follow_state.dart';
+import 'hongguo_series.dart';
 import 'local_store.dart';
 import 'models.dart';
 
@@ -21,6 +22,7 @@ class DramaDetails extends ChangeNotifier {
   final int _epoch;
   Drama _drama;
   List<Episode> _episodes = const [];
+  List<HongguoSeriesEntry> _seasons = const [];
   String _warning = '';
   String? _error;
   bool _loading = false;
@@ -30,6 +32,7 @@ class DramaDetails extends ChangeNotifier {
 
   Drama get drama => _drama;
   List<Episode> get episodes => _episodes;
+  List<HongguoSeriesEntry> get seasons => _seasons;
   String get warning => _warning;
   String? get error => _error;
   bool get loading => _loading;
@@ -78,6 +81,7 @@ class DramaDetails extends ChangeNotifier {
       repository.catalogUpdates.publish(_drama, retryCover: true);
       unawaited(store.refreshDrama(_drama).catchError((Object _) {}));
       unawaited(_supplement(generation));
+      unawaited(_loadSeasons(generation));
     } catch (error) {
       if (!_current(generation)) return;
       _error = error.toString();
@@ -95,6 +99,26 @@ class DramaDetails extends ChangeNotifier {
       _notify();
       repository.catalogUpdates.publish(_drama);
       await store.refreshDrama(_drama);
+    } catch (_) {}
+  }
+
+  Future<void> _loadSeasons(int generation) async {
+    if (_drama.source != SourceSite.hongguo.id) return;
+    final base = hongguoSeriesInfo(_drama)?.baseTitle ?? _drama.title.trim();
+    if (base.isEmpty) return;
+    try {
+      final page = await repository.catalog(
+        SourceSite.hongguo.id,
+        query: base,
+      );
+      if (!_current(generation)) return;
+      final seasons = hongguoSeriesEntries(_drama, page.items);
+      final current = _seasons.map((entry) => entry.drama.id).toSet();
+      final fresh = seasons.map((entry) => entry.drama.id).toSet();
+      if (_current(generation) && !setEquals(current, fresh)) {
+        _seasons = seasons;
+        _notify();
+      }
     } catch (_) {}
   }
 

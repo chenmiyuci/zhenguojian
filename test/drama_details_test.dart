@@ -77,4 +77,37 @@ void main() {
     expect(details.allowed, isFalse);
     expect(repository.detailRequests, 0);
   });
+
+  test('a hongguo drama discovers the seasons of its series', () async {
+    final second = drama('s2', title: '剧甲 第2季');
+    final third = drama('s3', title: '剧甲 第3季');
+    final repository = FakeRepository()
+      ..details[first.id] = dramaDetail(first, count: 3)
+      ..searchResults[first.title] = [first, second, third];
+    final details = _open(repository, await openStore(), first);
+    await pumpEventQueue();
+
+    expect(details.seasons, hasLength(3));
+    expect(details.seasons.map((entry) => entry.label).toList(), [
+      '第 1 季',
+      '第 2 季',
+      '第 3 季',
+    ]);
+  });
+
+  test('season search failure or no series keeps seasons empty', () async {
+    final repository = FakeRepository()
+      ..details[first.id] = dramaDetail(first, count: 3)
+      ..searchFailure = '搜索超时';
+    final details = _open(repository, await openStore(), first);
+    await pumpEventQueue();
+
+    expect(details.seasons, isEmpty);
+    expect(details.error, isNull);
+
+    repository.searchFailure = '';
+    details.load();
+    await pumpEventQueue();
+    expect(details.seasons, isEmpty);
+  });
 }

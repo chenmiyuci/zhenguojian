@@ -9,6 +9,7 @@ import 'core_bridge.dart';
 import 'danmaku_controller.dart';
 import 'danmaku_style.dart';
 import 'diary_service.dart';
+import 'hongguo_series.dart' show hongguoSeriesEntries, hongguoSeriesInfo;
 import 'local_store.dart';
 import 'models.dart';
 import 'playback_loader.dart';
@@ -38,13 +39,14 @@ class PlaybackSession extends ChangeNotifier {
   PlaybackSession({
     required this.repository,
     required this.store,
-    required this.detail,
+    required DramaDetail detail,
     required this._player,
     this._standby,
     required int index,
     double position = 0,
     bool autoplay = true,
-  }) : _engaged = autoplay,
+  }) : _detail = detail,
+       _engaged = autoplay,
        _index = index,
        _epoch = store.profileEpoch {
     final preferences = store.playbackPreferences;
@@ -122,7 +124,8 @@ class PlaybackSession extends ChangeNotifier {
 
   final AppRepository repository;
   final LocalStore store;
-  final DramaDetail detail;
+  DramaDetail _detail;
+  DramaDetail get detail => _detail;
   Player _player;
   Player? _standby;
   late final DanmakuController danmaku;
@@ -158,6 +161,8 @@ class PlaybackSession extends ChangeNotifier {
   bool _engaged;
   bool _staleAudio = false;
   bool _stalled = false;
+  bool _seasonLoading = false;
+  bool _seasonFailed = false;
   String _loadingMessage = '正在准备播放';
   String? _error;
   String? _saveWarning;
@@ -207,7 +212,9 @@ class PlaybackSession extends ChangeNotifier {
   PlaybackPreferences get preferences => _preferences;
   DanmakuStyle get danmakuStyle => DanmakuStyle.of(store.playbackPreferences);
   bool get hasPrevious => _index > 0;
-  bool get hasNext => _index + 1 < detail.episodes.length;
+  bool get hasNext =>
+      _index + 1 < detail.episodes.length ||
+      (detail.drama.source == SourceSite.hongguo.id && !_seasonFailed);
   String get qualityLabel {
     final plan = _plan;
     if (plan?.local == true) return '本地原画';
@@ -331,6 +338,7 @@ class PlaybackSession extends ChangeNotifier {
         return;
       }
     }
+    if (_index + 1 >= detail.episodes.length) return;
     _preloader.prepare(
       detail.drama,
       detail.episodes[_index + 1],
@@ -353,14 +361,85 @@ class PlaybackSession extends ChangeNotifier {
     if (duration <= Duration.zero ||
         player.state.position < duration - const Duration(seconds: 2)) {
       _queueRecovery('early_completion');
-    } else if (_foreground && hasNext) {
+    } else if (_foreground && _index + 1 < detail.episodes.length) {
       unawaited(play(_index + 1));
+    } else if (_foreground) {
+      unawaited(_advanceSeason());
     } else {
-      _playIntent = false;
-      endBoost();
-      unawaited(player.pause());
-      unawaited(saveProgress());
+      _seasonEnd();
     }
+  }
+
+  void _seasonEnd() {
+    _playIntent = false;
+    endBoost();
+    unawaited(player.pause());
+    unawaited(saveProgress());
+  }
+
+  /// 搜索同系列并加载下一季详情，没有下一季时返回 null。
+  Future<DramaDetail?> _loadNextSeason(DramaDetail detail) async {
+    final drama = detail.drama;
+    final info = hongguoSeriesInfo(drama);
+    final base = info?.baseTitle ?? drama.title.trim();
+    if (base.isEmpty) return null;
+    final page = await repository.catalog(
+      SourceSite.hongguo.id,
+      query: base,
+    );
+    final entries = hongguoSeriesEntries(drama, page.items);
+    final season =
+        entries
+            .where((entry) => entry.drama.id == drama.id)
+            .firstOrNull
+            ?.season ??
+        info?.season;
+    if (season == null) return null;
+    for (final entry in entries) {
+      if (entry.season != season + 1) continue;
+      final next = await repository.detail(entry.drama);
+      if (next.episodes.isEmpty) continue;
+      return next;
+    }
+    return null;
+  }
+
+  Future<bool> _advanceSeason() async {
+    if (_seasonLoading || _closed || !_usable) return false;
+    if (_detail.drama.source != SourceSite.hongguo.id) {
+      _seasonEnd();
+      return false;
+    }
+    _seasonLoading = true;
+    _loading = true;
+    _loadingMessage = '正在获取下一季';
+    final ticket = _generation;
+    _notify();
+    DramaDetail? next;
+    try {
+      next = await _loadNextSeason(_detail);
+    } catch (_) {}
+    if (_closed || !_current(ticket)) {
+      _seasonLoading = false;
+      return false;
+    }
+    _seasonLoading = false;
+    if (next == null) {
+      _seasonFailed = true;
+      _loading = false;
+      _notify();
+      _seasonEnd();
+      return false;
+    }
+    await saveProgress();
+    if (_closed || !_current(ticket)) return false;
+    _seasonFailed = false;
+    _detail = next;
+    _index = 0;
+    _openedIndex = -1;
+    _notify();
+    await play(0);
+    return true;
   }
 
   void _queueRecovery(String reason) {
@@ -752,6 +831,7 @@ class PlaybackSession extends ChangeNotifier {
 
   Future<bool> next() async {
     if (!hasNext) return false;
+    if (_index + 1 >= detail.episodes.length) return _advanceSeason();
     await play(_index + 1);
     return true;
   }
