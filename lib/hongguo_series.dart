@@ -4,8 +4,17 @@ import 'models.dart';
 
 const _hongguoSeriesLimit = 200;
 
+/// 系列识别规则变化时递增，让旧落盘缓存失效重建。
+const seriesSeasonsCacheVersion = 2;
+
+// 标题末尾的季号后缀：第2季 / 44季 / 2部 / 二 / 3。基础名相同即为一剧。
 final _seasonSuffix = RegExp(
-  r'第\s*([0-9零〇一二两兩三四五六七八九十百]+)\s*([季部])[\s\u3000，。！？、：；·「」『』（）【】《》“”‘’.,!?:;\-_/()\[\]{}]*$',
+  r'[\s　]*第?\s*([0-9零〇一二两兩三四五六七八九十百]{1,7})\s*([季部])?[\s　，。！？、：；·「」『』（）【】《》“”‘’.,!?:;\-_/()\[\]{}]*$',
+);
+
+// 季号在开头：第2季 剧名 → 基础名取开头之后的部分。
+final _seasonPrefix = RegExp(
+  r'^第\s*([0-9零〇一二两兩三四五六七八九十百]+)\s*([季部])[\s　]+(\S.*)$',
 );
 
 class HongguoSeriesInfo {
@@ -36,6 +45,19 @@ class HongguoSeriesEntry {
   final String unit;
 
   String get label => '第 $season $unit';
+
+  Map<String, Object?> toJson() => {
+    'drama': drama.toJson(),
+    'season': season,
+    'unit': unit,
+  };
+
+  factory HongguoSeriesEntry.fromJson(Map<String, dynamic> json) =>
+      HongguoSeriesEntry(
+        drama: Drama.fromJson(Map<String, dynamic>.from(json['drama'] as Map)),
+        season: json['season'] as int,
+        unit: json['unit'] as String,
+      );
 }
 
 int? _seasonNumber(String label) {
@@ -90,26 +112,42 @@ int? _seasonNumber(String label) {
 HongguoSeriesInfo? hongguoSeriesInfo(Drama drama, {String? unit}) {
   if (drama.source != SourceSite.hongguo.id) return null;
   final title = drama.title.trim();
-  final match = _seasonSuffix.firstMatch(title);
-  if (match == null) {
-    if (unit == null || title.isEmpty) return null;
-    return HongguoSeriesInfo(
-      baseTitle: title,
-      key: normalizedSearchText(title),
-      season: 1,
-      unit: unit,
-      explicit: false,
-    );
+  if (title.isEmpty) return null;
+  final prefix = _seasonPrefix.firstMatch(title);
+  if (prefix != null) {
+    final base = prefix[3]!.trim();
+    final season = _seasonNumber(prefix[1]!);
+    if (base.isNotEmpty && season != null) {
+      return HongguoSeriesInfo(
+        baseTitle: base,
+        key: normalizedSearchText(base),
+        season: season,
+        unit: '季',
+        explicit: true,
+      );
+    }
   }
-  final base = title.substring(0, match.start).trim();
-  final season = _seasonNumber(match[1]!);
-  if (base.isEmpty || season == null) return null;
+  final match = _seasonSuffix.firstMatch(title);
+  if (match != null) {
+    final base = title.substring(0, match.start).trim();
+    final season = _seasonNumber(match[1]!);
+    if (base.isNotEmpty && season != null) {
+      return HongguoSeriesInfo(
+        baseTitle: base,
+        key: normalizedSearchText(base),
+        season: season,
+        unit: '季',
+        explicit: true,
+      );
+    }
+  }
+  if (unit == null) return null;
   return HongguoSeriesInfo(
-    baseTitle: base,
-    key: normalizedSearchText(base),
-    season: season,
-    unit: match[2]!,
-    explicit: true,
+    baseTitle: title,
+    key: normalizedSearchText(title),
+    season: 1,
+    unit: '季',
+    explicit: false,
   );
 }
 
@@ -119,51 +157,26 @@ List<HongguoSeriesEntry> hongguoSeriesEntries(
 ) {
   if (anchor.source != SourceSite.hongguo.id) return const [];
   var anchorInfo = hongguoSeriesInfo(anchor);
-  String key, unit;
+  String key;
   int anchorSeason;
   if (anchorInfo == null) {
-    final baseKey = normalizedSearchText(anchor.title);
-    final groups = <String, List<HongguoSeriesInfo>>{};
-    for (final drama in candidates) {
-      final info = hongguoSeriesInfo(drama);
-      if (info != null && info.key == baseKey) {
-        (groups[info.unit] ??= []).add(info);
-      }
-    }
-    if (groups.isEmpty) return const [];
-    final best = groups.entries.toList()
-      ..sort((a, b) {
-        final count = b.value.length.compareTo(a.value.length);
-        if (count != 0) return count;
-        final maxA = a.value.fold<int>(
-          0,
-          (value, info) => value > info.season ? value : info.season,
-        );
-        final maxB = b.value.fold<int>(
-          0,
-          (value, info) => value > info.season ? value : info.season,
-        );
-        return maxB.compareTo(maxA);
-      });
-    key = baseKey;
-    unit = best.first.key;
+    key = normalizedSearchText(anchor.title);
     anchorSeason = 1;
-    anchorInfo = hongguoSeriesInfo(anchor, unit: unit);
+    anchorInfo = hongguoSeriesInfo(anchor, unit: '季');
   } else {
     key = anchorInfo.key;
-    unit = anchorInfo.unit;
     anchorSeason = anchorInfo.season;
   }
   if (anchorInfo == null) return const [];
   final byId = <String, HongguoSeriesEntry>{};
   for (final drama in [anchor, ...candidates]) {
     if (drama.source != SourceSite.hongguo.id) continue;
-    final info = hongguoSeriesInfo(drama, unit: unit);
-    if (info == null || info.key != key || info.unit != unit) continue;
+    final info = hongguoSeriesInfo(drama, unit: '季');
+    if (info == null || info.key != key) continue;
     byId[drama.id] = HongguoSeriesEntry(
       drama: drama,
       season: drama.id == anchor.id ? anchorSeason : info.season,
-      unit: unit,
+      unit: '季',
     );
   }
   final entries = byId.values.toList()

@@ -185,9 +185,17 @@ const _television = _Metrics(
 );
 
 class DetailPage extends StatefulWidget {
-  const DetailPage({super.key, required this.store, required this.drama});
+  const DetailPage({
+    super.key,
+    required this.store,
+    required this.drama,
+    this.candidates = const [],
+  });
   final LocalStore store;
   final Drama drama;
+
+  /// 来源页面已加载的剧集（如搜索结果），算同系列时可免再搜索。
+  final List<Drama> candidates;
 
   @override
   State<DetailPage> createState() => _DetailPageState();
@@ -198,6 +206,8 @@ class _DetailPageState extends State<DetailPage> {
   PlaybackHandle? _handle;
   bool _watching = false;
   final _currentEpisode = GlobalKey();
+  final _seasonMenu = MenuController();
+  final _seasonScroll = ScrollController();
   bool _expanded = false;
   final _playFocus = FocusNode();
   final _followFocus = FocusNode();
@@ -215,6 +225,7 @@ class _DetailPageState extends State<DetailPage> {
       AppScope.of(context).repository,
       widget.store,
       widget.drama,
+      candidates: widget.candidates,
     )..addListener(_preopen);
   }
 
@@ -222,6 +233,7 @@ class _DetailPageState extends State<DetailPage> {
   void dispose() {
     _handle?.dispose();
     _details?.dispose();
+    _seasonScroll.dispose();
     for (final node in [
       _playFocus,
       _followFocus,
@@ -1216,45 +1228,109 @@ class _DetailPageState extends State<DetailPage> {
     final current = details.seasons
         .where((entry) => entry.drama.id == details.drama.id)
         .firstOrNull;
-    if (current == null) return null;
-    final previous = details.seasons
-        .where((entry) => entry.season < current.season)
-        .fold<HongguoSeriesEntry?>(null, (best, entry) =>
-        best == null || entry.season > best.season ? entry : best);
-    final next = details.seasons
-        .where((entry) => entry.season > current.season)
-        .fold<HongguoSeriesEntry?>(null, (best, entry) =>
-        best == null || entry.season < best.season ? entry : best);
-    if (previous == null && next == null) return null;
+    if (current == null || details.seasons.length < 2) return null;
     final colors = Theme.of(context).colorScheme;
-    Widget entry(IconData icon, HongguoSeriesEntry season) => DecoratedBox(
-      decoration: BoxDecoration(
-        color: colors.surfaceContainerHighest,
-        borderRadius: BorderRadius.circular(6),
+    final shown = details.shownSeasons;
+    return MenuAnchor(
+      controller: _seasonMenu,
+      style: MenuStyle(
+        backgroundColor: WidgetStatePropertyAll(colors.surfaceContainerHigh),
+        padding: const WidgetStatePropertyAll(EdgeInsets.symmetric(
+          horizontal: 6,
+          vertical: 6,
+        )),
       ),
-      child: InkWell(
-        borderRadius: BorderRadius.circular(6),
-        onTap: () => _openSeason(season),
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            spacing: 4,
-            children: [
-              Icon(icon, size: m.tag + 4, color: colors.onSurfaceVariant),
-              Text(season.label, style: TextStyle(fontSize: m.tag)),
-            ],
+      menuChildren: [
+        ConstrainedBox(
+          constraints: const BoxConstraints(maxHeight: 320),
+          child: NotificationListener<ScrollNotification>(
+            onNotification: (notification) {
+              if (notification.metrics.extentAfter < 40 &&
+                  details.hasMoreSeasons &&
+                  !details.seasonsLoading) {
+                details.loadMoreSeasons();
+              }
+              return false;
+            },
+            child: SingleChildScrollView(
+              controller: _seasonScroll,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (final entry in shown)
+                    _seasonItem(details, entry, m),
+                  if (details.hasMoreSeasons)
+                    Padding(
+                      padding: const EdgeInsets.all(8),
+                      child: TextButton(
+                        onPressed: details.seasonsLoading
+                            ? null
+                            : details.loadMoreSeasons,
+                        child: Text(details.seasonsLoading
+                            ? '加载中…'
+                            : '加载更多季'),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ],
+      builder: (context, controller, child) => DecoratedBox(
+        decoration: BoxDecoration(
+          color: colors.surfaceContainerHighest,
+          borderRadius: BorderRadius.circular(6),
+        ),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(6),
+          onTap: () => controller.open(),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+            child: child,
           ),
         ),
       ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        spacing: 4,
+        children: [
+          Text(
+            '${details.seasons.length}${details.hasMoreSeasons ? '+' : ''} 季：${current.label}',
+            style: TextStyle(fontSize: m.tag),
+          ),
+          Icon(
+            Icons.keyboard_arrow_down_rounded,
+            size: m.tag + 4,
+            color: colors.onSurfaceVariant,
+          ),
+        ],
+      ),
     );
-    return Wrap(
-      spacing: 6,
-      runSpacing: 6,
-      children: [
-        if (previous != null) entry(Icons.keyboard_arrow_up_rounded, previous),
-        if (next != null) entry(Icons.keyboard_arrow_down_rounded, next),
-      ],
+  }
+
+  Widget _seasonItem(
+    DramaDetails details,
+    HongguoSeriesEntry entry,
+    _Metrics m,
+  ) {
+    final colors = Theme.of(context).colorScheme;
+    final current = entry.drama.id == details.drama.id;
+    return MenuItemButton(
+      leadingIcon: current
+          ? Icon(Icons.check_rounded, size: m.tag + 4)
+          : const SizedBox(width: 0),
+      style: MenuItemButton.styleFrom(
+        padding: const EdgeInsets.symmetric(horizontal: 10),
+        minimumSize: Size(0, m.chip),
+        foregroundColor: current ? colors.primary : colors.onSurface,
+      ),
+      onPressed: current ? null : () => _openSeason(entry),
+      child: Text(
+        '${entry.label} · ${entry.drama.title}',
+        style: TextStyle(fontSize: m.tag),
+      ),
     );
   }
 

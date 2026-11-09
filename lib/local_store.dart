@@ -66,6 +66,8 @@ class LocalStore extends ChangeNotifier {
   final Map<String, WatchEntry> _history = {};
   final Map<String, Drama> _favorites = {};
   final Map<String, FollowState> _followStates = {};
+  final Map<String, List<HongguoSeriesEntry>> _seriesSeasons = {};
+  final Map<String, int> _seriesShown = {};
   Map<String, FollowCheck> _followChecks = {};
   Map<String, Object?> _settings = {};
   Map<String, Object?> _userSettings = {};
@@ -208,9 +210,31 @@ class LocalStore extends ChangeNotifier {
     _followStates.clear();
     _followChecks = {};
     _userSettings = {};
+    _seriesSeasons.clear();
+    _seriesShown.clear();
     if (_configurationError != null) return;
     final id = _current;
     _userSettings = await _readMap(_userFile(id, 'settings'));
+    final seasons = _map(await _readFile(_userFile(id, 'seriesSeasons')));
+    if (seasons['version'] == seriesSeasonsCacheVersion) {
+      for (final entry in seasons.entries) {
+        if (entry.key == 'version' || entry.key == 'shown') continue;
+        final rows = _rows(entry.value);
+        if (rows.isEmpty) continue;
+        try {
+          _seriesSeasons[entry.key] = [
+            for (final row in rows)
+              HongguoSeriesEntry.fromJson(Map<String, dynamic>.from(row as Map)),
+          ];
+        } catch (_) {}
+      }
+      final shown = _map(seasons['shown']);
+      for (final entry in shown.entries) {
+        if (entry.value is int) {
+          _seriesShown[entry.key] = entry.value as int;
+        }
+      }
+    }
     for (final row in _rows(await _readFile(_userFile(id, 'history')))) {
       try {
         final entry = WatchEntry.fromJson(row);
@@ -590,6 +614,41 @@ class LocalStore extends ChangeNotifier {
     _history
       ..clear()
       ..addEntries(rows.map((entry) => MapEntry(entry.drama.id, entry)));
+  }
+
+  /// 同系列各季的缓存；键为系列内任一剧的 ID，值为按季排序的条目。
+  List<HongguoSeriesEntry>? seriesSeasons(String dramaId) =>
+      _seriesSeasons[dramaId];
+
+  int seriesSeasonsShown(String dramaId) => _seriesShown[dramaId] ?? 10;
+
+  Future<void> saveSeriesSeasons(
+    String dramaId,
+    List<HongguoSeriesEntry> entries, {
+    int? shown,
+  }) {
+    if (entries.length < 2) return Future.value();
+    final seasons = Map.of(_seriesSeasons)
+      ..[dramaId] = List.of(entries);
+    for (final entry in entries) {
+      _seriesSeasons[entry.drama.id] = List.of(entries);
+      if (shown != null) _seriesShown[entry.drama.id] = shown;
+    }
+    if (shown != null) _seriesShown[dramaId] = shown;
+    return _write(_userFile(_current, 'seriesSeasons'), {
+      'version': seriesSeasonsCacheVersion,
+      'shown': Map.of(_seriesShown),
+      for (final entry in _seriesSeasons.entries)
+        entry.key: [for (final item in entry.value) item.toJson()],
+    }).catchError((Object _) {
+      // 写失败时回滚内存，保持一致
+      for (final entry in entries) {
+        if (identical(_seriesSeasons[entry.drama.id], seasons[dramaId])) {
+          _seriesSeasons.remove(entry.drama.id);
+        }
+      }
+      _seriesSeasons[dramaId] = seasons[dramaId]!;
+    });
   }
 
   Future<void> toggleFavorite(Drama drama) {

@@ -18,7 +18,7 @@ const (
 	hongguoSearchSeasonTimeout = 25 * time.Second
 )
 
-var hongguoSearchSeasonSuffix = regexp.MustCompile(`第\s*([0-9零〇一二两兩三四五六七八九十百]+)\s*([季部])[\p{P}\s]*$`)
+var hongguoSearchSeasonSuffix = regexp.MustCompile(`[\p{P}\s]*第?\s*([0-9零〇一二两兩三四五六七八九十百]{1,7})\s*([季部])?[\p{P}\s]*$`)
 
 type hongguoSearchSeries struct {
 	title   string

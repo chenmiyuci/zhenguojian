@@ -112,7 +112,11 @@ class _SearchPageState extends State<SearchPage> {
 
   void _open(Drama drama) => openPage<void>(
     context,
-    (_) => DetailPage(store: widget.store, drama: drama),
+    (_) => DetailPage(
+      store: widget.store,
+      drama: drama,
+      candidates: _results?.items ?? const [],
+    ),
   );
 
   @override

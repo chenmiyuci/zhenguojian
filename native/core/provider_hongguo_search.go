@@ -163,6 +163,17 @@ func (downloader *Downloader) fetchHongguoSearch(ctx context.Context, keyword st
 	pageCtx, cancel := context.WithTimeout(ctx, hongguoSearchPageTimeout)
 	defer cancel()
 	page, pageErr := downloader.fetchHongguoSearchPage(pageCtx, keyword, 1)
+	cancel()
+	if pageErr != nil && !errors.Is(ctx.Err(), context.Canceled) {
+		// 综合页对特定设备+关键词可能返回 4xx，轮换一次设备再试。
+		client := downloader.hongguoClient()
+		current, _, _ := client.device(false)
+		if err := downloader.ensureHongguoDevice(ctx, false, current); err == nil {
+			retryCtx, retryCancel := context.WithTimeout(ctx, hongguoSearchPageTimeout)
+			page, pageErr = downloader.fetchHongguoSearchPage(retryCtx, keyword, 1)
+			retryCancel()
+		}
+	}
 	if errors.Is(ctx.Err(), context.Canceled) {
 		return hongguoSearchEntry{}, ctx.Err()
 	}
