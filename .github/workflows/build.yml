@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 concurrency:
   group: app-build-${{ github.workflow }}-${{ github.ref }}
@@ -309,8 +309,6 @@ jobs:
       }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    permissions:
-      contents: write
     steps:
       - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
@@ -370,33 +368,8 @@ jobs:
             found && !started && /^[[:space:]]*$/ { next }
             found { started = 1; print }
           ' CHANGELOG.md)"
-          printf '%s' "$changes" > changes.md
           if [ -n "$changes" ]; then
             { printf '更新内容：\n\n%s\n\n' "$changes"; cat notes.md; } > notes.tmp
             mv notes.tmp notes.md
           fi
           gh release create "$TAG" release/* --target "$GITHUB_SHA" --title "红果鉴 / ${name} ${VERSION}" --notes-file notes.md
-      - name: 推送到 Telegram 频道
-        continue-on-error: true
-        env:
-          TELEGRAM_BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ vars.TELEGRAM_CHAT_ID }}
-          VERSION: ${{ needs.prepare.outputs.version }}
-          TAG: ${{ needs.prepare.outputs.tag }}
-        run: |
-          set -euo pipefail
-          if [ -z "$TELEGRAM_BOT_TOKEN" ] || [ -z "$TELEGRAM_CHAT_ID" ]; then
-            echo "未配置 Telegram，跳过推送。"
-            exit 0
-          fi
-          name="${ZHENGUOJIAN_DISPLAY_NAME:-真果鉴}"
-          changes="$(cat changes.md)"
-          url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/releases/tag/$TAG"
-          text="红果鉴 / ${name} ${VERSION} 已发布"
-          if [ -n "$changes" ]; then
-            text="$(printf '%s\n\n更新内容：\n\n%s' "$text" "${changes:0:3500}")"
-          fi
-          text="$(printf '%s\n\n下载：%s' "$text" "$url")"
-          curl -fsS "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
-            --data-urlencode "chat_id=${TELEGRAM_CHAT_ID}" \
-            --data-urlencode "text=${text}" >/dev/null
