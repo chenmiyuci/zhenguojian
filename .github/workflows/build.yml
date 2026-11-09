@@ -26,6 +26,10 @@ jobs:
     timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
+      - &setup-python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - &setup-go
         uses: actions/setup-go@v5
         with:
@@ -98,41 +102,59 @@ jobs:
           - edition: zhenguojian
             arguments: '--all-sources'
             signing: ZHENGUOJIAN
+    env:
+      ANDROID_KEYSTORE_BASE64: ${{ secrets[format('{0}_KEYSTORE_BASE64', matrix.signing)] }}
     steps:
       - uses: actions/checkout@v4
-      - &setup-python
-        uses: actions/setup-python@v5
+      - name: 未配置签名 Secrets 时跳过 Android 出包
+        id: gate
+        run: |
+          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
+            echo "未配置 ${matrix.signing}_KEYSTORE_BASE64，跳过 Android 出包（Windows、macOS、iOS 不受影响）。" >&2
+            echo "skip=true" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-python@v5
+        if: steps.gate.outputs.skip != 'true'
         with:
           python-version: '3.12'
       - uses: actions/setup-java@v4
+        if: steps.gate.outputs.skip != 'true'
         with:
           distribution: temurin
           java-version: '17'
-      - *setup-go
-      - *setup-flutter
+      - uses: actions/setup-go@v5
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          go-version-file: native/go.mod
+          cache-dependency-path: native/go.sum
+      - uses: subosito/flutter-action@v2
+        if: steps.gate.outputs.skip != 'true'
+        with:
+          flutter-version: '3.47.9'
+          channel: stable
+          cache: true
       - name: Set up Android SDK
+        if: steps.gate.outputs.skip != 'true'
         uses: android-actions/setup-android@v3
         with:
           packages: "platforms;android-36"
           accept-android-sdk-licenses: true
       - run: sdkmanager 'ndk;28.2.13676358'
+        if: steps.gate.outputs.skip != 'true'
       - name: Configure Android signing
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets[format('{0}_KEYSTORE_BASE64', matrix.signing)] }}
+        if: steps.gate.outputs.skip != 'true'
         run: |
           set -euo pipefail
-          if [ -z "$ANDROID_KEYSTORE_BASE64" ]; then
-            echo "未配置签名 Secrets，拒绝发布 debug 签名的 APK。" >&2
-            exit 1
-          fi
           printf '%s' "$ANDROID_KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$RUNNER_TEMP/release.jks"
           echo "ANDROID_KEYSTORE_PATH=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
       - run: python scripts/build_android.py ${{ matrix.arguments }}
+        if: steps.gate.outputs.skip != 'true'
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets[format('{0}_KEYSTORE_PASSWORD', matrix.signing)] }}
           ANDROID_KEY_ALIAS: ${{ secrets[format('{0}_KEY_ALIAS', matrix.signing)] }}
           ANDROID_KEY_PASSWORD: ${{ secrets[format('{0}_KEY_PASSWORD', matrix.signing)] }}
       - name: 校验 APK 签名证书
+        if: steps.gate.outputs.skip != 'true'
         shell: bash
         env:
           CERT_SHA256: ${{ vars[format('{0}_CERT_SHA256', matrix.signing)] }}
@@ -161,6 +183,7 @@ jobs:
             fi
           done
       - uses: actions/upload-artifact@v4
+        if: steps.gate.outputs.skip != 'true'
         with:
           name: ${{ matrix.edition }}-android
           path: dist/android/*
@@ -269,6 +292,16 @@ jobs:
 
   release:
     needs: [checks, prepare, android, windows, ios, macos]
+    if: >-
+      ${{
+        !cancelled()
+        && needs.checks.result == 'success'
+        && needs.prepare.result == 'success'
+        && needs.android.result != 'failure'
+        && needs.windows.result == 'success'
+        && needs.ios.result == 'success'
+        && needs.macos.result == 'success'
+      }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     permissions:
@@ -289,31 +322,43 @@ jobs:
         run: |
           set -euo pipefail
           name="${ZHENGUOJIAN_DISPLAY_NAME:-真果鉴}"
+          android_section=""
+          if ls release/*.apk >/dev/null 2>&1; then
+            android_section="Android：
+          - *-arm64-v8a.apk：适用于较新的安卓设备
+          - *-armeabi-v7a.apk：适用于较老的安卓设备，电视推荐使用此版本
+          - *-x86_64.apk：适用于模拟器
+
+          "
+          fi
+          ios_section=""
+          if ls release/*.ipa >/dev/null 2>&1; then
+            ios_section="iOS：
+          - *-ios-unsigned.ipa：未签名 IPA，可用相关工具安装
+
+          "
+          fi
           cat > notes.md <<EOF
           版本 ${VERSION}。两个版本功能相同，区别只在站源范围，按需选择：
 
           - 红果鉴 hongguojian：仅红果站源
           - ${name} zhenguojian：全部站源
 
-          Android：
-          - *-arm64-v8a.apk：适用于较新的安卓设备
-          - *-armeabi-v7a.apk：适用于较老的安卓设备，电视推荐使用此版本
-          - *-x86_64.apk：适用于模拟器
-
-          iOS：
-          - *-ios-unsigned.ipa：未签名 IPA，可用相关工具安装
-
-          Windows：
+          ${android_section}${ios_section}Windows：
           - *-windows-x64-setup.exe：安装包，默认安装到当前用户，无需管理员权限；安装时可改为所有用户
           - *-windows-x64.zip：便携版，解压后运行 hongguojian.exe 或 zhenguojian.exe
 
           macOS：
           - *-macos-universal.dmg：适用于 macOS 12 及以上的 Apple 芯片和 Intel 电脑，打开后拖入 Applications；未经公证，首次打开前在终端执行 xattr -dr com.apple.quarantine /Applications/红果鉴.app（${name}为 ${name}.app）
+          EOF
+          if [ -n "$ANDROID_CERT_SHA256" ] || [ -n "$ZHENGUOJIAN_CERT_SHA256" ]; then
+            cat >> notes.md <<EOF
 
           签名证书 SHA-256：
           - 红果鉴：${ANDROID_CERT_SHA256}
           - ${name}：${ZHENGUOJIAN_CERT_SHA256}
           EOF
+          fi
           changes="$(awk -v heading="## ${VERSION}" '
             $0 == heading { found = 1; next }
             found && /^## / { exit }
