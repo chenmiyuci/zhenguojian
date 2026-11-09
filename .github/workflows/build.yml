@@ -205,11 +205,14 @@ jobs:
       - name: Set up MinGW-w64
         shell: pwsh
         run: |
-          choco install mingw --no-progress -y
+          # runner 自带 gcc；choco 只是备用，其下载源走 GitHub release，
+          # 遇到 504 时失败不阻塞，回退用自带版本。
+          choco install mingw --no-progress -y; if ($LASTEXITCODE -ne 0) { Write-Host 'choco 安装 mingw 失败，使用 runner 自带的 gcc。' }
           $exe = Get-ChildItem -Path 'C:\ProgramData\mingw64', 'C:\ProgramData\chocolatey\lib\mingw' `
                    -Recurse -Include 'x86_64-w64-mingw32-gcc.exe', 'gcc.exe' -ErrorAction SilentlyContinue |
                  Select-Object -First 1 -ExpandProperty FullName
           if (-not $exe) { $exe = (Get-Command x86_64-w64-mingw32-gcc -ErrorAction SilentlyContinue).Source }
+          if (-not $exe) { $exe = (Get-Command gcc -ErrorAction SilentlyContinue).Source }
           if (-not $exe) { throw 'MinGW-w64 安装失败，找不到 gcc' }
           Split-Path $exe | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
           & $exe --version | Select-Object -First 1
