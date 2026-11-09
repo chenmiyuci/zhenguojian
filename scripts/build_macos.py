@@ -124,7 +124,17 @@ def preheat_frameworks():
                 if download_with_retry(FFMPEG_KIT_URL, archive):
                     try:
                         with zipfile.ZipFile(archive) as bundle:
-                            bundle.extractall(work)
+                            for item in bundle.infolist():
+                                target = Path(work) / item.filename
+                                # 框架顶层的 Headers 等是符号链接，zipfile 不会还原，
+                                # 必须按外部属性手动建链，否则 clang 找不到头文件。
+                                if (item.external_attr >> 16) & 0o170000 == 0o120000:
+                                    target.parent.mkdir(parents=True, exist_ok=True)
+                                    if target.is_symlink() or target.exists():
+                                        target.unlink()
+                                    target.symlink_to(bundle.read(item).decode())
+                                else:
+                                    bundle.extract(item, work)
                         missing = [item for item in FFMPEG_KIT_FRAMEWORKS
                                    if not (Path(work) / f'{item}.framework').is_dir()]
                         if missing:
