@@ -1213,39 +1213,47 @@ class _DetailPageState extends State<DetailPage> {
   }
 
   Widget? _seasons(DramaDetails details, _Metrics m) {
-    if (details.seasons.isEmpty) return null;
+    final current = details.seasons
+        .where((entry) => entry.drama.id == details.drama.id)
+        .firstOrNull;
+    if (current == null) return null;
+    final previous = details.seasons
+        .where((entry) => entry.season < current.season)
+        .fold<HongguoSeriesEntry?>(null, (best, entry) =>
+        best == null || entry.season > best.season ? entry : best);
+    final next = details.seasons
+        .where((entry) => entry.season > current.season)
+        .fold<HongguoSeriesEntry?>(null, (best, entry) =>
+        best == null || entry.season < best.season ? entry : best);
+    if (previous == null && next == null) return null;
     final colors = Theme.of(context).colorScheme;
+    Widget entry(IconData icon, HongguoSeriesEntry season) => DecoratedBox(
+      decoration: BoxDecoration(
+        color: colors.surfaceContainerHighest,
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(6),
+        onTap: () => _openSeason(season),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            spacing: 4,
+            children: [
+              Icon(icon, size: m.tag + 4, color: colors.onSurfaceVariant),
+              Text(season.label, style: TextStyle(fontSize: m.tag)),
+            ],
+          ),
+        ),
+      ),
+    );
     return Wrap(
       spacing: 6,
       runSpacing: 6,
       children: [
-        for (final entry in details.seasons)
-          DecoratedBox(
-            decoration: BoxDecoration(
-              color: entry.drama.id == details.drama.id
-                  ? colors.primaryContainer
-                  : colors.surfaceContainerHighest,
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: InkWell(
-              borderRadius: BorderRadius.circular(6),
-              onTap: entry.drama.id == details.drama.id
-                  ? null
-                  : () => _openSeason(entry),
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                child: Text(
-                  entry.label,
-                  style: TextStyle(
-                    fontSize: m.tag,
-                    fontWeight: entry.drama.id == details.drama.id
-                        ? FontWeight.w700
-                        : FontWeight.w400,
-                  ),
-                ),
-              ),
-            ),
-          ),
+        if (previous != null) entry(Icons.keyboard_arrow_up_rounded, previous),
+        if (next != null) entry(Icons.keyboard_arrow_down_rounded, next),
       ],
     );
   }

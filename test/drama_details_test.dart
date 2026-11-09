@@ -93,6 +93,7 @@ void main() {
       '第 2 季',
       '第 3 季',
     ]);
+    expect(details.seasons.map((entry) => entry.drama.id), containsAll([first.id, second.id, third.id]));
   });
 
   test('season search failure or no series keeps seasons empty', () async {
